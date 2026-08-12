@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.confluence import generate_signal
 from app.analysis.smc import MarketStructureResult, analyze_market_structure
 from app.core.config import get_settings
+from app.core.db import get_session
 from app.ingestion.store import store
-from app.models.schemas import TradeSignal, Venue
+from app.models.db_models import SignalRecord
+from app.models.schemas import ConfluenceFactor, RiskPlan, TradeSignal, Venue
 
 router = APIRouter(tags=["signals"])
+
+MAX_SIGNAL_HISTORY_LIMIT = 500
 
 
 def _load_candles(venue: str, symbol: str, timeframe: str):
@@ -38,3 +44,47 @@ async def get_signal(venue: str, symbol: str, timeframe: str = "1m") -> TradeSig
         timeframe=timeframe,
         min_risk_reward=settings.min_risk_reward,
     )
+
+
+@router.get("/signals/history", response_model=list[TradeSignal])
+async def get_signal_history(
+    venue: str,
+    symbol: str,
+    timeframe: str = "1m",
+    limit: int = 50,
+    session: AsyncSession = Depends(get_session),
+) -> list[TradeSignal]:
+    """Signals persisted by the background signal-watcher — a durable record of
+    what the confluence engine has flagged over time, not just the current one."""
+    limit = min(limit, MAX_SIGNAL_HISTORY_LIMIT)
+    stmt = (
+        select(SignalRecord)
+        .where(
+            SignalRecord.venue == venue,
+            SignalRecord.symbol == symbol.lower(),
+            SignalRecord.timeframe == timeframe,
+        )
+        .order_by(SignalRecord.ts.desc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        TradeSignal(
+            symbol=r.symbol,
+            venue=Venue(r.venue),
+            timeframe=r.timeframe,
+            direction=r.direction,
+            ts=r.ts,
+            confluences=[ConfluenceFactor(**f) for f in r.confluences],
+            confluence_score=r.confluence_score,
+            risk=RiskPlan(
+                entry=r.entry,
+                stop_loss=r.stop_loss,
+                take_profits=r.take_profits,
+                risk_reward=r.risk_reward,
+                atr=r.atr,
+            ),
+            note=r.note,
+        )
+        for r in rows
+    ]

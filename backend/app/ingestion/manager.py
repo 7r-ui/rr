@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app.analysis.signal_watcher import watch_signals
 from app.core.config import get_settings
 from app.core.redis_bus import candle_channel
 from app.ingestion.binance_ws import stream_binance_klines
 from app.ingestion.bybit_ws import stream_bybit_klines
 from app.ingestion.oanda_client import stream_oanda_prices
+from app.ingestion.persistence import persist_candles
 from app.ingestion.polygon_client import stream_polygon_quotes
 from app.ingestion.store import sync_candle_store
 
@@ -69,6 +71,25 @@ def build_ingestion_tasks() -> list[asyncio.Task]:
         ),
         asyncio.create_task(
             _supervise("candle-store-sync", lambda: sync_candle_store(candle_channels))
+        ),
+        asyncio.create_task(
+            _supervise(
+                "candle-persistence",
+                lambda: persist_candles(
+                    candle_channels,
+                    batch_size=settings.candle_persist_batch_size,
+                    flush_interval=settings.candle_persist_interval_seconds,
+                ),
+            )
+        ),
+        asyncio.create_task(
+            _supervise(
+                "signal-watcher",
+                lambda: watch_signals(
+                    scan_interval=settings.signal_scan_interval_seconds,
+                    min_risk_reward=settings.min_risk_reward,
+                ),
+            )
         ),
     ]
     return tasks

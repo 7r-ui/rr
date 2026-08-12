@@ -8,6 +8,11 @@ class Settings(BaseSettings):
 
     app_name: str = "NexusTrade AI"
     redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "postgresql+asyncpg://nexustrade:nexustrade@localhost:5432/nexustrade"
+
+    candle_persist_batch_size: int = 50
+    candle_persist_interval_seconds: float = 5.0
+    signal_scan_interval_seconds: float = 30.0
 
     binance_ws_url: str = "wss://stream.binance.com:9443/stream"
     bybit_ws_url: str = "wss://stream.bybit.com/v5/public/linear"
