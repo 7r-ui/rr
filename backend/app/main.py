@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import chart, market, signals
 from app.core.config import get_settings
+from app.core.db import engine
 from app.ingestion.manager import build_ingestion_tasks
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +24,7 @@ async def lifespan(app: FastAPI):
     finally:
         for task in tasks:
             task.cancel()
+        await engine.dispose()
 
 
 def create_app() -> FastAPI:

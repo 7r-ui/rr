@@ -31,9 +31,23 @@ backend/            FastAPI application
                      a pluggable multimodal vision model client
                      (model_client.py, OpenAI-compatible, gpt-4o-mini by
                      default) for the /analyze-chart endpoint
-  app/api/routes/    market.py (REST + WebSocket candle fan-out),
-                     signals.py (/structure, /signals), chart.py
-                     (/analyze-chart)
+  app/api/routes/    market.py (REST + WebSocket candle fan-out, plus
+                                /market/candles/history — Postgres-backed),
+                     signals.py (/structure, /signals, /signals/history),
+                     chart.py (/analyze-chart)
+  app/core/db.py     Async SQLAlchemy engine/session
+  app/models/
+    db_models.py     ORM models (CandleRecord, SignalRecord) — separate from
+                     the Pydantic wire contracts in schemas.py on purpose
+  app/ingestion/
+    persistence.py   Batches confirmed candles from Redis into Postgres
+                     (queue + separate flush-on-count-or-timeout task)
+  app/analysis/
+    signal_watcher.py  Periodically scans tracked symbols, persists newly
+                     emitted confluence signals, dedupes against the last
+                     persisted one per (venue, symbol, timeframe)
+  migrations/        Alembic migrations (async engine, autogenerate wired
+                     to app.core.db.Base.metadata)
 
 frontend/            Next.js 15 (App Router) + TypeScript + Tailwind
                      dashboard: glassmorphism UI, TradingView
@@ -41,12 +55,15 @@ frontend/            Next.js 15 (App Router) + TypeScript + Tailwind
                      WebSocket updates, confluence signal panel, and a
                      chart-screenshot uploader for the vision endpoint
 
-docker-compose.yml   redis + backend + frontend
+docker-compose.yml   redis + postgres + backend + frontend
 ```
 
 Ingestion publishes to Redis Pub/Sub channels (`candles:*`, `ticks:*`); the
-analysis layer and the API's WebSocket fan-out both subscribe independently,
-so one exchange feed stalling never blocks another.
+in-memory candle store, the Postgres persistence task, and the API's
+WebSocket fan-out all subscribe independently, so one exchange feed stalling
+never blocks another. The in-memory store stays the hot path for live
+reads (bounded ring buffer, includes the still-forming bar); Postgres is the
+durable layer behind it — only confirmed bars, unbounded by that window.
 
 ## Definitions used by the SMC engine
 
@@ -76,11 +93,16 @@ Backend: http://localhost:8000/docs · Frontend: http://localhost:3000
 # Redis
 redis-server &
 
+# Postgres — create the DB/user matching backend/.env.example once:
+#   createuser nexustrade -P   (password: nexustrade)
+#   createdb nexustrade -O nexustrade
+
 # Backend
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+alembic upgrade head
 uvicorn app.main:app --reload
 
 # Frontend (separate terminal)
@@ -89,6 +111,9 @@ npm install
 cp .env.example .env.local
 npm run dev
 ```
+
+New migrations: `alembic revision --autogenerate -m "..."` after changing
+`app/models/db_models.py`, then `alembic upgrade head`.
 
 ## What's real vs. what needs your own API keys
 
@@ -110,6 +135,14 @@ npm run dev
 - Message broker is Redis Pub/Sub, not Kafka — sufficient for this scale;
   swap in `aiokafka` behind the same publish/subscribe interface in
   `app/core/redis_bus.py` if you need Kafka's durability/replay guarantees.
+- **Persistence**: confirmed candles flush to Postgres every
+  `CANDLE_PERSIST_BATCH_SIZE` bars or `CANDLE_PERSIST_INTERVAL_SECONDS`
+  seconds, whichever comes first (defaults: 50 / 5s). The signal watcher
+  scans every `SIGNAL_SCAN_INTERVAL_SECONDS` (default 30s) and only writes
+  a new row when the signal actually changed for that symbol — verified
+  end-to-end against a real local Postgres instance (300 synthetic candles
+  in, all persisted; a generated signal persisted once and correctly
+  skipped on the next unchanged scan).
 
 ## Known limitation
 
