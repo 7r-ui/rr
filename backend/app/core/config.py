@@ -19,9 +19,11 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     polygon_base_url: str = "https://api.polygon.io"
 
-    vision_provider: str = "openai"  # "openai" | "none"
+    vision_provider: str = "openai"  # "openai" | "anthropic" | "none"
     openai_api_key: str = ""
     vision_model: str = "gpt-4o-mini"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
 
     default_symbols_crypto: list[str] = ["btcusdt", "ethusdt"]
     default_symbols_fx: list[str] = ["EUR_USD", "XAU_USD"]
@@ -29,6 +31,18 @@ class Settings(BaseSettings):
     min_risk_reward: float = 2.0
     atr_period: int = 14
     atr_stop_multiple: float = 1.5
+
+    default_account_balance: float = 10000.0
+    default_risk_pct: float = 0.01
+
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    discord_webhook_url: str = ""
+
+    # Shared secret a TradingView alert webhook must echo back (as
+    # `?secret=` or an `X-Webhook-Secret` header) before its OHLCV payload
+    # is trusted. Empty disables auth entirely — fine for local dev only.
+    tradingview_webhook_secret: str = ""
 
     cors_origins: list[str] = ["http://localhost:3000"]
 

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import chart, market, signals
+from app.api.routes import chart, market, signals, webhook
 from app.core.config import get_settings
 from app.ingestion.manager import build_ingestion_tasks
 
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(market.router)
     app.include_router(signals.router)
     app.include_router(chart.router)
+    app.include_router(webhook.router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

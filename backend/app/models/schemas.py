@@ -13,6 +13,7 @@ class Venue(str, Enum):
     BYBIT = "bybit"
     OANDA = "oanda"
     POLYGON = "polygon"
+    TRADINGVIEW = "tradingview"
 
 
 class Candle(BaseModel):
@@ -125,6 +126,10 @@ class RiskPlan(BaseModel):
     take_profits: list[float]
     risk_reward: list[float]
     atr: float
+    account_balance: float
+    risk_pct: float
+    risk_amount: float
+    position_size: float  # units of the base asset sized so risk_amount is the max loss to stop_loss
 
 
 class TradeSignal(BaseModel):
@@ -158,3 +163,55 @@ class ChartAnalysisResponse(BaseModel):
     symbol: Optional[str]
     levels: list[DetectedLevel]
     notes: str
+
+
+class MarketStructureSection(BaseModel):
+    trend: str  # "bullish" | "bearish" | "sideways"
+    key_structure: list[str]
+
+
+class TradeSetupSection(BaseModel):
+    bias: str  # "bullish" | "bearish" | "neutral"
+    entry: Optional[float] = None
+    stop_loss: Optional[float] = None
+    take_profits: list[float] = []
+
+
+class RiskManagementSection(BaseModel):
+    account_balance: float
+    risk_pct: float
+    max_risk_amount: float
+    position_size: Optional[float] = None
+    risk_reward: Optional[float] = None
+
+
+class ConvictionSection(BaseModel):
+    confidence: str  # "High" | "Medium" | "Low"
+    reasoning: list[str]
+
+
+class ChartReport(BaseModel):
+    """The structured SMC/Price-Action report an LLM (Claude or an
+    OpenAI-compatible vision model) produces from one chart screenshot —
+    a technical read, not individualized investment advice."""
+
+    symbol: Optional[str] = None
+    market_structure: MarketStructureSection
+    trade_setup: TradeSetupSection
+    risk_management: RiskManagementSection
+    conviction: ConvictionSection
+    provider: str
+
+
+class TradingViewAlertPayload(BaseModel):
+    """Body of a TradingView `alert()` webhook (configured via a Pine Script
+    `alert_message` using placeholders like {{open}}/{{high}}/{{low}}/{{close}}/{{volume}}/{{time}})."""
+
+    symbol: str
+    timeframe: str = "1m"
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+    time: Optional[datetime] = None

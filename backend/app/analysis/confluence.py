@@ -40,6 +40,8 @@ def generate_signal(
     timeframe: str,
     smc_config: SMCConfig | None = None,
     min_risk_reward: float = 2.0,
+    account_balance: float = 10000.0,
+    risk_pct: float = 0.01,
 ) -> TradeSignal | None:
     if len(candles) < 30:
         return None
@@ -136,7 +138,12 @@ def generate_signal(
 
     entry = candles[-1].close
     risk_plan = build_risk_plan(
-        candles, entry, final_direction, min_risk_reward=min_risk_reward
+        candles,
+        entry,
+        final_direction,
+        min_risk_reward=min_risk_reward,
+        account_balance=account_balance,
+        risk_pct=risk_pct,
     )
     if risk_plan is None:
         return None
