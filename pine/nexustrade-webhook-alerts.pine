@@ -1,0 +1,94 @@
+//@version=6
+indicator("NexusTrade AI - Webhook Feed", shorttitle="NTX Webhook", overlay=true, max_labels_count=100)
+
+// -----------------------------------------------------------------------------
+// Companion "data feed" for NexusTrade AI's POST /webhook/tradingview endpoint.
+//
+//   1. Plots confirmed swing highs/lows (n bars each side) so this is a
+//      legitimate standalone chart overlay, not just an alert emitter.
+//   2. On every CONFIRMED bar close, calls alert() with a JSON payload that
+//      matches the backend's TradingViewAlertPayload schema exactly, so a
+//      TradingView Alert built on "Any alert() function call" streams OHLCV
+//      into the same candle store / Redis pub-sub pipeline the Binance,
+//      Bybit, OANDA and Polygon feeds use -- letting any symbol without a
+//      dedicated exchange WS integration feed the SMC/Elliott confluence
+//      engine identically.
+//
+// SETUP (see pine/README.md for the full walkthrough):
+//   1. Add this indicator to the chart for the symbol/timeframe you want fed
+//      into NexusTrade AI.
+//   2. Create a TradingView Alert on this indicator:
+//        Condition = "Any alert() function call"
+//        Webhook URL = https://<your-backend-host>/webhook/tradingview?secret=<TRADINGVIEW_WEBHOOK_SECRET>
+//        Trigger      = "Once Per Bar Close" (matches the barstate.isconfirmed
+//                       gate below -- do NOT pick "Once Per Bar", it would
+//                       send unconfirmed/repainting bar data)
+//   TradingView's alert dialog has no custom-header field, so the secret
+//   MUST travel as the "?secret=" query param, never as a header, from here.
+// -----------------------------------------------------------------------------
+
+grp_signal = "Swing Structure"
+swingLookback = input.int(2, "Swing Lookback (bars each side)", minval=1, maxval=20, group=grp_signal)
+
+grp_webhook = "Webhook Feed"
+sendAlerts     = input.bool(true, "Fire webhook alert() on confirmed bar close", group=grp_webhook)
+symbolOverride = input.string("", "Symbol override (blank = syminfo.ticker)", group=grp_webhook,
+     tooltip="Set only if the backend should key this feed under a different symbol string than TradingView's ticker.")
+
+// --- Confirmed swing points -------------------------------------------------
+// ta.pivothigh/pivotlow only return a non-na value swingLookback bars *after*
+// the pivot bar, i.e. they never repaint the trailing edge: by the time a
+// pivot prints, both the swing bar and the confirming bars are closed.
+pivHigh = ta.pivothigh(high, swingLookback, swingLookback)
+pivLow  = ta.pivotlow(low, swingLookback, swingLookback)
+
+plotshape(not na(pivHigh), title="Swing High", style=shape.triangledown, location=location.abovebar,
+     offset=-swingLookback, color=color.new(color.red, 0), size=size.tiny)
+plotshape(not na(pivLow), title="Swing Low", style=shape.triangleup, location=location.belowbar,
+     offset=-swingLookback, color=color.new(color.lime, 0), size=size.tiny)
+
+alertcondition(not na(pivHigh), title="Swing High Confirmed", message="{{ticker}} confirmed swing high on {{interval}}")
+alertcondition(not na(pivLow), title="Swing Low Confirmed", message="{{ticker}} confirmed swing low on {{interval}}")
+
+// --- Chart resolution -> backend timeframe key ------------------------------
+// Mirrors the "1m"/"5m"/"15m"/"1h"/"4h"/"1d" style used by
+// backend/app/ingestion/binance_ws.py's BINANCE_INTERVALS and stored as a
+// plain string key throughout the candle store, so a TradingView 60-minute
+// chart lands in the same bucket as a Binance "1h" kline stream.
+f_timeframe() =>
+    string tf = timeframe.period
+    if timeframe.isseconds
+        tf := str.tostring(timeframe.multiplier) + "s"
+    else if timeframe.isminutes
+        int mins = timeframe.multiplier
+        tf := mins % 60 == 0 and mins >= 60 ? str.tostring(mins / 60) + "h" : str.tostring(mins) + "m"
+    else if timeframe.isdaily
+        tf := str.tostring(timeframe.multiplier) + "d"
+    else if timeframe.isweekly
+        tf := str.tostring(timeframe.multiplier) + "w"
+    else if timeframe.ismonthly
+        tf := str.tostring(timeframe.multiplier) + "M"
+    tf
+
+// --- Build the JSON body matching TradingViewAlertPayload exactly ----------
+// `time` is deliberately omitted: the field is Optional in the schema and
+// the backend defaults to receipt time, which avoids brittle date-string
+// formatting inside Pine (str.format has no reliable ISO-8601 date verb).
+f_payload() =>
+    string sym = symbolOverride == "" ? syminfo.ticker : symbolOverride
+    string tf  = f_timeframe()
+    string o   = str.tostring(open,  format.mintick)
+    string h   = str.tostring(high,  format.mintick)
+    string l   = str.tostring(low,   format.mintick)
+    string c   = str.tostring(close, format.mintick)
+    string v   = str.tostring(nz(volume, 0.0))
+    '{"symbol":"' + sym + '","timeframe":"' + tf + '","open":' + o +
+     ',"high":' + h + ',"low":' + l + ',"close":' + c + ',"volume":' + v + '}'
+
+// --- Fire on confirmed bar close only ---------------------------------------
+// barstate.isconfirmed is true exactly once per bar, on its final update --
+// this is what stops the webhook from ever sending unconfirmed/repainting
+// OHLC to the backend. alert.freq_once_per_bar_close is redundant with that
+// check but kept explicit so the intent survives a refactor.
+if sendAlerts and barstate.isconfirmed
+    alert(f_payload(), alert.freq_once_per_bar_close)
