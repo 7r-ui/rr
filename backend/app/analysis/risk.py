@@ -19,6 +19,8 @@ def build_risk_plan(
     stop_atr_multiple: float = 1.5,
     take_profit_multiples: tuple[float, ...] = (2.0, 3.0, 4.0),
     min_risk_reward: float = 2.0,
+    account_balance: float = 10000.0,
+    risk_pct: float = 0.01,
 ) -> RiskPlan | None:
     """Returns None if there isn't enough history for ATR, or if the resulting
     plan can't clear `min_risk_reward` on its nearest target."""
@@ -43,6 +45,17 @@ def build_risk_plan(
     if not rr or rr[0] < min_risk_reward:
         return None
 
+    risk_amount = account_balance * risk_pct
+    position_size = risk_amount / risk
+
     return RiskPlan(
-        entry=entry, stop_loss=stop_loss, take_profits=take_profits, risk_reward=rr, atr=atr
+        entry=entry,
+        stop_loss=stop_loss,
+        take_profits=take_profits,
+        risk_reward=rr,
+        atr=atr,
+        account_balance=account_balance,
+        risk_pct=risk_pct,
+        risk_amount=risk_amount,
+        position_size=position_size,
     )

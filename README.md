@@ -32,8 +32,21 @@ backend/            FastAPI application
                      (model_client.py, OpenAI-compatible, gpt-4o-mini by
                      default) for the /analyze-chart endpoint
   app/api/routes/    market.py (REST + WebSocket candle fan-out),
-                     signals.py (/structure, /signals), chart.py
-                     (/analyze-chart)
+                     signals.py (/structure, /signals, POST /signals/notify),
+                     chart.py (/analyze-chart, POST /analyze-chart/report),
+                     webhook.py (POST /webhook/tradingview)
+  app/alerts/        dispatcher.py — best-effort Telegram/Discord delivery
+                     for a generated TradeSignal (opt-in via env, never
+                     raises on a channel being down)
+
+mcp-server/          Python MCP server exposing this backend's market
+                     structure / signal / chart-report endpoints as tools
+                     for Claude Desktop/Code — see mcp-server/README.md
+
+pine/                TradingView Pine Script companion that fires
+                     `alert()` webhooks with OHLCV JSON at
+                     POST /webhook/tradingview, so a symbol doesn't need a
+                     dedicated exchange feed wired into app/ingestion
 
 frontend/            Next.js 15 (App Router) + TypeScript + Tailwind
                      dashboard: glassmorphism UI, TradingView
@@ -110,6 +123,32 @@ npm run dev
 - Message broker is Redis Pub/Sub, not Kafka — sufficient for this scale;
   swap in `aiokafka` behind the same publish/subscribe interface in
   `app/core/redis_bus.py` if you need Kafka's durability/replay guarantees.
+
+## Position sizing, alerts, TradingView webhooks, and the Claude report
+
+- **Position sizing**: `RiskPlan` (and the `/signals` response) now includes
+  `account_balance`, `risk_pct`, `risk_amount`, and `position_size` —
+  sized so a stop-loss hit loses exactly `risk_amount` (default 1% of a
+  $10,000 account, overridable per-request via `?account_balance=` /
+  `?risk_pct=`, or globally via `DEFAULT_ACCOUNT_BALANCE`/`DEFAULT_RISK_PCT`).
+- **Claude-powered structured report**: `POST /analyze-chart/report` (image
+  upload) runs the full SMC/Price-Action analyst prompt against Claude
+  (`ANTHROPIC_API_KEY`, preferred) or an OpenAI-compatible vision model
+  (`OPENAI_API_KEY` fallback), returning `market_structure`, `trade_setup`,
+  `risk_management` (computed server-side from the model's entry/stop, never
+  invented by the model), and `conviction`. Returns 503 — never a fabricated
+  report — if no provider is configured or the response doesn't parse.
+- **Alerts**: `POST /signals/notify` runs the same confluence logic as
+  `GET /signals` and, if a signal fires, pushes a formatted message to
+  Telegram (`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`) and/or Discord
+  (`DISCORD_WEBHOOK_URL`) — either left blank is simply skipped.
+- **TradingView webhook ingestion**: `POST /webhook/tradingview` accepts an
+  `alert()` webhook body (`symbol`, `timeframe`, `open/high/low/close`,
+  `volume`, optional `time`) and feeds it into the same candle store/Redis
+  pub-sub pipeline as the exchange WS feeds — see `pine/` for the companion
+  script. Set `TRADINGVIEW_WEBHOOK_SECRET` and require it as `?secret=` or
+  an `X-Webhook-Secret` header; left blank, the endpoint accepts
+  unauthenticated data (local dev only).
 
 ## Known limitation
 
